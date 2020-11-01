@@ -18,7 +18,7 @@
 #define GAME_ON 1
 #define WAIT_INPUT 2
 
-#define TMAX 8000
+#define TMIN 1000
 
 #define EI_ARDUINO_INTERRUPTED_PIN // to enable pin states functionality 
 #include <EnableInterrupt.h>
@@ -83,8 +83,8 @@ class StepAnalogReader {
     }
 
     int getLevel() {
-      int read = analogRead(this->pin);
-      return abs(read / ((minimum - maximum) / steps)) + 1;
+      int anRead = analogRead(this->pin);
+      return this->steps - (abs(anRead / ((minimum - maximum) / steps)));
     }
 };
 
@@ -97,7 +97,8 @@ int buttonsSize = sizeof(buttons) / sizeof(buttons[0]);
 
 int score;
 int gameStat = START_GAME;
-unsigned long maxTime = 0;
+unsigned long tWait = 0;
+unsigned long tMax = 0;
 unsigned long flyStops = 0;
 
 int fadeStep = 5;
@@ -120,13 +121,14 @@ void setup() {
     testLeds();
   }
   initButtons();
- 
+
   Serial.println("Welcome to the Track to Led Fly Game. Press Key T1 to Start.");
 }
 
 void loop() {
   static uint8_t interruptedPin;
   noInterrupts();
+  delay(30);
   interruptedPin = interruptedPinShared;
   interruptedPinShared = 0;
   interrupts();
@@ -140,7 +142,10 @@ void loop() {
       delay(30);
       if (interruptedPin == buttons[0]) {
         gameStat = GAME_ON;
-        maxTime = TMAX / stepAnalogReader.getLevel();
+        if (DEBUG) {
+          printDebug("Game difficulty: " + String(stepAnalogReader.getLevel()));
+        }
+        tMax = stepAnalogReader.getLevel() * TMIN;
         score = 0;
         Serial.println("Go!");
         analogWrite(PIN_RED, 0);
@@ -150,9 +155,20 @@ void loop() {
       fly.fly();
       gameStat = WAIT_INPUT;
       digitalWrite(places[fly.getPlace()], HIGH);
+      tWait = random(TMIN, tMax + 1);
       flyStops = millis();
+      if (DEBUG) {
+        printDebug("Will wait for " + String(tWait) + " millis");
+      }
     case WAIT_INPUT:
-      if (millis() - flyStops > maxTime || (interruptedPin != buttons[fly.getPlace()] && interruptedPin != 0)) {
+      if (millis() - flyStops > tWait || (interruptedPin != buttons[fly.getPlace()] && interruptedPin != 0)) {
+        if (DEBUG) {
+          if (interruptedPin != buttons[fly.getPlace()] && interruptedPin != 0) {
+            printDebug("Wrong button pressed.");
+          } else if (millis() - flyStops > tWait) {
+            printDebug("Waited time: " + String(millis() - flyStops));
+          }
+        }
         Serial.println("Game Over - Score: " + String(score));
         gameStat = START_GAME;
         digitalWrite(places[fly.getPlace()], LOW);
@@ -161,9 +177,12 @@ void loop() {
         Serial.println("Tracking the fly: pos " + String(fly.getPlace() + 1));
         score++;
         digitalWrite(places[fly.getPlace()], LOW);
-        maxTime = maxTime/8*7;
+        tMax = tMax / 8 * 7;
+        if (tMax <= TMIN) {
+          tMax = TMIN;
+        }
         if (DEBUG) {
-          printDebug("maxTime decreasing! Now is: " + String(maxTime));
+          printDebug("tMax decreasing! Now is: " + String(tMax));
         }
       }
       break;
